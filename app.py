@@ -1,6 +1,7 @@
 import streamlit as st
 import subprocess
 import os
+import re
 
 st.set_page_config(page_title="Creador Manim", layout="wide")
 
@@ -10,16 +11,12 @@ st.markdown("Ingresa tu función y personaliza los parámetros para generar la a
 # --- BARRA LATERAL PARA PARÁMETROS ---
 st.sidebar.header("⚙️ Parámetros")
 
-# --- NUEVO: SECCIÓN DE AYUDA (CHEATSHEET) ---
+# Sección de Ayuda (Cheatsheet)
 st.sidebar.subheader("📖 Ayuda")
 with st.sidebar.expander("Ver Hoja de Trucos (Sintaxis)"):
-    # Comprobamos si la imagen existe en la carpeta
     ruta_imagen = "cheatsheet.png"
     if os.path.exists(ruta_imagen):
-        # Mostramos la imagen ajustada al ancho de la barra
         st.image(ruta_imagen, use_container_width=True)
-        
-        # Botón de descarga
         with open(ruta_imagen, "rb") as file:
             st.download_button(
                 label="📥 Descargar Imagen",
@@ -32,13 +29,17 @@ with st.sidebar.expander("Ver Hoja de Trucos (Sintaxis)"):
 
 st.sidebar.markdown("---")
 
-# Textos descriptivos
+# Textos descriptivos y Posición
 st.sidebar.subheader("📝 Textos")
 texto_titulo = st.sidebar.text_input("Título de la animación:", value="Gráfica de mi función")
+posicion_texto = st.sidebar.selectbox(
+    "Ubicación del texto:",
+    ["Arriba Centro", "Abajo Centro", "Esquina Superior Izquierda", "Esquina Superior Derecha"]
+)
 
 # Input de la función
 st.sidebar.subheader("🧮 Matemáticas")
-funcion = st.sidebar.text_input("Función f(x) (usa 'np.' para math):", value="np.sin(x)")
+funcion = st.sidebar.text_input("Función f(x) (usa 'np.' para math):", value="np.exp(x)")
 
 # Personalización
 st.sidebar.subheader("🎨 Estilo")
@@ -50,17 +51,47 @@ duracion_animacion = st.sidebar.slider("Duración de la animación (segundos)", 
 # --- TRADUCTOR AUTOMÁTICO DE PYTHON A LATEX ---
 def python_a_latex(texto):
     """Convierte la sintaxis de Numpy a un texto que Manim/LaTeX pueda dibujar"""
-    texto_limpio = texto.replace("np.pi", "\\pi") 
-    texto_limpio = texto_limpio.replace("np.", "\\") 
-    texto_limpio = texto_limpio.replace("**", "^")   
-    texto_limpio = texto_limpio.replace("*", " \cdot ") 
-    return texto_limpio
+    t = texto.replace("np.pi", "\\pi")
+    
+    # Transformar potencias, raíces y exponenciales (e^x)
+    t = re.sub(r"np\.power\(([^,]+),\s*([^)]+)\)", r"{\1}^{\2}", t)
+    t = re.sub(r"np\.square\(([^)]+)\)", r"{\1}^2", t)
+    t = re.sub(r"np\.sqrt\(([^)]+)\)", r"\\sqrt{\1}", t)
+    t = re.sub(r"np\.exp\(([^)]+)\)", r"e^{\1}", t) # NUEVO: e elevado a la x
+    
+    # Transformar operadores estándar
+    t = t.replace("**", "^").replace("*", " \cdot ")
+    
+    # Funciones trigonométricas y logaritmos
+    t = t.replace("np.sin", "\\sin").replace("np.cos", "\\cos").replace("np.tan", "\\tan")
+    t = t.replace("np.log", "\\log")
+    
+    # Todo lo que sobre de numpy (para evitar que LaTeX falle al dibujar)
+    t = re.sub(r"np\.([a-zA-Z0-9_]+)", r"\\operatorname{\1}", t)
+    
+    return t
 
 # --- GENERADOR DEL CÓDIGO MANIM ---
-def generar_script_manim(func_str, color_graf, color_ej, grosor_linea, duracion, titulo):
+def generar_script_manim(func_str, color_graf, color_ej, grosor_linea, duracion, titulo, posicion):
     formula_visual = python_a_latex(func_str)
+    
+    # Protegemos las llaves para que no rompan el string de Python
     latex_seguro = formula_visual.replace("{", "{{").replace("}", "}}")
     titulo_seguro = titulo.replace("{", "{{").replace("}", "}}")
+    
+    # Configurar la posición en código Manim
+    if posicion == "Arriba Centro":
+        pos_code = "grupo_texto.to_edge(UP)"
+        shift_ejes = "ejes.shift(DOWN * 0.5)"
+    elif posicion == "Abajo Centro":
+        pos_code = "grupo_texto.to_edge(DOWN)"
+        shift_ejes = "ejes.shift(UP * 0.5)"
+    elif posicion == "Esquina Superior Izquierda":
+        pos_code = "grupo_texto.to_corner(UL)"
+        shift_ejes = "ejes.shift(DR * 0.2)"
+    else: # Esquina Superior Derecha
+        pos_code = "grupo_texto.to_corner(UR)"
+        shift_ejes = "ejes.shift(DL * 0.2)"
     
     codigo = f"""
 from manim import *
@@ -68,19 +99,30 @@ import numpy as np
 
 class FuncionAnimada(Scene):
     def construct(self):
-        titulo_anim = Text("{titulo_seguro}", font_size=36).to_edge(UP)
-        formula_anim = MathTex(r"f(x) = {latex_seguro}", font_size=40).next_to(titulo_anim, DOWN)
+        # 1. Crear los textos
+        titulo_anim = Text(r"{titulo_seguro}", font_size=36)
+        formula_anim = MathTex(r"f(x) = {latex_seguro}", font_size=40)
         
+        # Agruparlos y posicionarlos donde eligió el usuario
+        grupo_texto = VGroup(titulo_anim, formula_anim).arrange(DOWN)
+        {pos_code}
+        
+        # 2. Configurar ejes
         ejes = Axes(
             x_range=[-5, 5, 1],
             y_range=[-3, 3, 1],
             axis_config={{"color": "{color_ej}"}}
-        ).scale(0.8).shift(DOWN * 0.5)
+        ).scale(0.8)
         
+        # Movemos ligeramente los ejes para que no choquen con el texto
+        {shift_ejes}
+        
+        # 3. Crear la gráfica
         grafica = ejes.plot(lambda x: {func_str}, color="{color_graf}", stroke_width={grosor_linea})
         etiquetas = ejes.get_axis_labels(x_label="x", y_label="y")
         
-        self.play(Write(titulo_anim), FadeIn(formula_anim, shift=UP))
+        # 4. Animación
+        self.play(Write(grupo_texto))
         self.play(Create(ejes), Write(etiquetas))
         self.play(Create(grafica), run_time={duracion})
         self.wait(2)
@@ -92,7 +134,7 @@ if st.button("Generar Animación 🚀"):
     with st.spinner("Renderizando con Manim..."):
         script_path = "temp_scene.py"
         with open(script_path, "w") as f:
-            f.write(generar_script_manim(funcion, color_grafica, color_ejes, grosor, duracion_animacion, texto_titulo))
+            f.write(generar_script_manim(funcion, color_grafica, color_ejes, grosor, duracion_animacion, texto_titulo, posicion_texto))
         
         comando = ["manim", "-ql", script_path, "FuncionAnimada", "--format=mp4"]
         resultado = subprocess.run(comando, capture_output=True, text=True)
