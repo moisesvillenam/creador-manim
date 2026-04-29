@@ -1,0 +1,9 @@
+ffmpeg
+texlive
+texlive-latex-extra
+texlive-fonts-extra
+texlive-latex-recommended
+dvipng
+cm-super
+libcairo2-dev
+libpango1.0-dev
